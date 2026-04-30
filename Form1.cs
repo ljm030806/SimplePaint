@@ -4,7 +4,6 @@ namespace SimplePaint
     using System.Drawing;
     using System.Drawing.Drawing2D;
     using System.Drawing.Imaging;
-    using System.Drawing.Printing;
     using System.Windows.Forms;
 
     public partial class Form1 : Form
@@ -17,13 +16,16 @@ namespace SimplePaint
 
 
         private bool isDrawing = false;       // 현재드래그중인지여부
-        private Point startPoint;             // 드래그 시작점
-        private Point endPoint;               // 드래그끝점
+        private Point startPoint;             // 드래그 시작점 (캔버스 기준 좌표)
+        private Point endPoint;               // 드래그끝점 (캔버스 기준 좌표)
 
 
         private ToolType currentTool = ToolType.Line;  // 현재선택된도형
         private Color currentColor = Color.Black;      // 현재색상
         private int currentLineWidth = 2;
+
+        // 🔥 확대/축소 배율 변수 추가
+        private float zoom = 1.0f;
 
         public Form1()
         {
@@ -34,20 +36,27 @@ namespace SimplePaint
             canvasGraphics.Clear(Color.White);      //캔버스를 흰색으로 초기화
             picCanvas.Image = canvasBitmap;   // 그린그림을화면(PictureBox)에표시
 
+            // PictureBox의 모드를 확대/축소가 반영되도록 변경
+            picCanvas.SizeMode = PictureBoxSizeMode.StretchImage;
+
             // 마우스이벤트연결
             picCanvas.MouseDown += PicCanvas_MouseDown;
             picCanvas.MouseMove += PicCanvas_MouseMove;
             picCanvas.MouseUp += PicCanvas_MouseUp;
-
             picCanvas.Paint += PicCanvas_Paint;
 
-            // 도형 버튼 이벤트
+            // 마우스 휠 작동을 위해 픽쳐박스에 진입 시 포커스 강제 부여
+            picCanvas.MouseEnter += (s, e) => picCanvas.Focus();
+            picCanvas.MouseWheel += PicCanvas_MouseWheel;
+
+            // 도형 및 기타 버튼 이벤트
             btnLine.Click += btnLine_Click;
             btnRectangle.Click += btnRectangle_Click;
             btnCircle.Click += btnCircle_Click;
-            
-            // 🔥 저장 버튼 이벤트 연결 (여기에 추가)
             btnSaveFile.Click += btnSaveFile_Click;
+            
+            // 🔥 불러오기 버튼 이벤트 연결
+            btnOpenFile.Click += btnOpenFile_Click;
 
             cmbColor.SelectedIndexChanged += cmbColor_SelectedIndexChanged;
             cmbColor.SelectedIndex = 0;
@@ -57,33 +66,122 @@ namespace SimplePaint
             trbLineWidth.Value = 5;
             trbLineWidth.ValueChanged += trbLineWidth_ValueChanged;
 
+            // 스크롤바 자동 생성을 위해 PictureBox 부모 컨테이너(Form 또는 Panel)의 AutoScroll 활성화
+            if (picCanvas.Parent is ScrollableControl parent)
+            {
+                parent.AutoScroll = true;
+            }
         }
 
+        // 🔥 외부 이미지 로드 기능 추가
+        private void btnOpenFile_Click(object sender, EventArgs e)
+        {
+            using (OpenFileDialog openFileDialog = new OpenFileDialog())
+            {
+                openFileDialog.Title = "이미지 불러오기";
+                openFileDialog.Filter = "이미지 파일 (*.png; *.jpg; *.jpeg; *.bmp)|*.png;*.jpg;*.jpeg;*.bmp|모든 파일 (*.*)|*.*";
+
+                if (openFileDialog.ShowDialog() == DialogResult.OK)
+                {
+                    try
+                    {
+                        using (Image img = Image.FromFile(openFileDialog.FileName))
+                        {
+                            // 원본 이미지를 락(Lock) 없이 사용하기 위해 새 비트맵으로 복사 후 캔버스 교체
+                            canvasBitmap = new Bitmap(img.Width, img.Height, PixelFormat.Format32bppArgb);
+                            canvasGraphics?.Dispose();
+                            canvasGraphics = Graphics.FromImage(canvasBitmap);
+                            canvasGraphics.Clear(Color.White);
+                            canvasGraphics.DrawImage(img, 0, 0, img.Width, img.Height);
+                        }
+
+                        picCanvas.Image = canvasBitmap;
+                        zoom = 1.0f; // 배율 초기화
+                        ApplyZoom(new Point(0, 0), 1.0f); // 캔버스(PictureBox) 크기 재조정
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show("이미지를 불러오는 중 오류가 발생했습니다.\n" + ex.Message, "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            }
+        }
+
+        // 🔥 마우스 휠 확대/축소 이벤트
+        private void PicCanvas_MouseWheel(object sender, MouseEventArgs e)
+        {
+            if (canvasBitmap == null) return;
+
+            float oldZoom = zoom;
+
+            // 휠 방향에 따라 배율 25%씩 증가/감소
+            if (e.Delta > 0)
+                zoom *= 1.25f;
+            else if (e.Delta < 0)
+                zoom /= 1.25f;
+
+            // 줌 범위 제한 (10% ~ 1000%)
+            if (zoom < 0.1f) zoom = 0.1f;
+            if (zoom > 10.0f) zoom = 10.0f;
+
+            if (zoom != oldZoom)
+            {
+                ApplyZoom(e.Location, oldZoom);
+            }
+        }
+
+        // 🔥 확대/축소 적용 및 스크롤, 캔버스 크기 재계산 (마우스 포인터 중심)
+        private void ApplyZoom(Point mousePos, float oldZoom)
+        {
+            picCanvas.Width = (int)(canvasBitmap.Width * zoom);
+            picCanvas.Height = (int)(canvasBitmap.Height * zoom);
+
+            if (picCanvas.Parent is ScrollableControl parent)
+            {
+                // 확대 전 마우스가 있던 이미지 좌표가 확대 후에도 동일한 시야에 있도록 스크롤 위치 보정
+                int newMouseX = (int)((mousePos.X / oldZoom) * zoom);
+                int newMouseY = (int)((mousePos.Y / oldZoom) * zoom);
+
+                int newScrollX = Math.Abs(parent.AutoScrollPosition.X) + (newMouseX - mousePos.X);
+                int newScrollY = Math.Abs(parent.AutoScrollPosition.Y) + (newMouseY - mousePos.Y);
+
+                parent.AutoScrollPosition = new Point(newScrollX, newScrollY);
+            }
+        }
+
+        // 좌표 매핑 변경 : 현재 확대된 배율(zoom)로 나누어 실제 캔버스 그리기 좌표로 환산
         private void PicCanvas_MouseDown(object sender, MouseEventArgs e)
         {
-            isDrawing = true;             // 드래그시작
-            startPoint = e.Location;      // 시작점저장}
+            isDrawing = true;             
+            startPoint = new Point((int)(e.X / zoom), (int)(e.Y / zoom)); 
         }
+
         private void PicCanvas_MouseMove(object sender, MouseEventArgs e)
         {
             if (!isDrawing) return;
-            endPoint = e.Location;
+            endPoint = new Point((int)(e.X / zoom), (int)(e.Y / zoom));
             picCanvas.Invalidate();
         }
+
         private void PicCanvas_MouseUp(object sender, MouseEventArgs e)
         {
             if (!isDrawing) return;
             isDrawing = false;
-            endPoint = e.Location;
+            endPoint = new Point((int)(e.X / zoom), (int)(e.Y / zoom));
             using (Pen pen = new Pen(currentColor, currentLineWidth))
             {
                 DrawShape(canvasGraphics, pen, startPoint, endPoint);
             }
             picCanvas.Invalidate();
         }
+
         private void PicCanvas_Paint(object sender, PaintEventArgs e)
         {
             if (!isDrawing) return;
+            
+            // 프리뷰 역시 배율에 맞게 조정되도록 그래픽스 자체 배율 스케일링
+            e.Graphics.ScaleTransform(zoom, zoom); 
+
             using (Pen previewPen = new Pen(currentColor, currentLineWidth))
             {
                 previewPen.DashStyle = DashStyle.Dash;
@@ -107,6 +205,7 @@ namespace SimplePaint
                     break;
             }
         }
+
         private Rectangle GetRectangle(Point p1, Point p2)
         {
             return new Rectangle(
@@ -116,18 +215,22 @@ namespace SimplePaint
                 Math.Abs(p1.Y - p2.Y)
                 );
         }
+
         private void btnLine_Click(object sender, EventArgs e)
         {
             currentTool = ToolType.Line;
         }
+
         private void btnRectangle_Click(object sender, EventArgs e)
         {
             currentTool = ToolType.Rectangle;
         }
+
         private void btnCircle_Click(object sender, EventArgs e)
         {
             currentTool = ToolType.Circle;
         }
+
         private void cmbColor_SelectedIndexChanged(object sender, EventArgs e)
         {
             switch (cmbColor.SelectedIndex)
@@ -149,17 +252,17 @@ namespace SimplePaint
                     break;
             }
         }
+
         private void trbLineWidth_ValueChanged(object sender, EventArgs e)
         {
             currentLineWidth = trbLineWidth.Value;
         }
-        
+
         private void btnSaveFile_Click(object sender, EventArgs e)
         {
             using (SaveFileDialog saveFileDialog = new SaveFileDialog())
             {
                 saveFileDialog.Title = "그림 저장하기";
-                // 텍스트도 JPEG 대신 JPG로 표시되도록 수정
                 saveFileDialog.Filter = "PNG 이미지 (*.png)|*.png|JPG 이미지 (*.jpg)|*.jpg|BMP 이미지 (*.bmp)|*.bmp";
                 saveFileDialog.DefaultExt = "png";
                 saveFileDialog.AddExtension = true;
