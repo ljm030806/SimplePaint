@@ -41,9 +41,13 @@ namespace SimplePaint
 
             picCanvas.Paint += PicCanvas_Paint;
 
+            // 도형 버튼 이벤트
             btnLine.Click += btnLine_Click;
             btnRectangle.Click += btnRectangle_Click;
             btnCircle.Click += btnCircle_Click;
+            
+            // 🔥 저장 버튼 이벤트 연결 (여기에 추가)
+            btnSaveFile.Click += btnSaveFile_Click;
 
             cmbColor.SelectedIndexChanged += cmbColor_SelectedIndexChanged;
             cmbColor.SelectedIndex = 0;
@@ -148,6 +152,58 @@ namespace SimplePaint
         private void trbLineWidth_ValueChanged(object sender, EventArgs e)
         {
             currentLineWidth = trbLineWidth.Value;
+        }
+        
+        private void btnSaveFile_Click(object sender, EventArgs e)
+        {
+            using (SaveFileDialog saveFileDialog = new SaveFileDialog())
+            {
+                saveFileDialog.Title = "그림 저장하기";
+                // 텍스트도 JPEG 대신 JPG로 표시되도록 수정
+                saveFileDialog.Filter = "PNG 이미지 (*.png)|*.png|JPG 이미지 (*.jpg)|*.jpg|BMP 이미지 (*.bmp)|*.bmp";
+                saveFileDialog.DefaultExt = "png";
+                saveFileDialog.AddExtension = true;
+                saveFileDialog.FilterIndex = 1; // 기본값을 PNG로 고정
+
+                if (saveFileDialog.ShowDialog() == DialogResult.OK)
+                {
+                    try
+                    {
+                        ImageFormat format = ImageFormat.Png;
+                        string fileName = saveFileDialog.FileName;
+
+                        // 선택한 필터 인덱스에 따라 저장 형식 결정
+                        switch (saveFileDialog.FilterIndex)
+                        {
+                            case 1:
+                                format = ImageFormat.Png;
+                                break;
+                            case 2:
+                                format = ImageFormat.Jpeg; 
+                                // 만약 확장자가 .jpeg로 알아서 붙었다면 .jpg로 강제 변경
+                                if (fileName.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    fileName = System.IO.Path.ChangeExtension(fileName, ".jpg");
+                                }
+                                break;
+                            case 3:
+                                format = ImageFormat.Bmp;
+                                break;
+                        }
+
+                        // 지정된 경로(강제된 확장자)와 포맷으로 캔버스 비트맵 저장
+                        if (canvasBitmap != null)
+                        {
+                            canvasBitmap.Save(fileName, format);
+                            MessageBox.Show("이미지가 성공적으로 저장되었습니다.", "저장 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show("이미지를 저장하는 중 오류가 발생했습니다.\n" + ex.Message, "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            }
         }
     }
 }
