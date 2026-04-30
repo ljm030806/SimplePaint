@@ -136,7 +136,6 @@
             groupBox3.TabIndex = 3;
             groupBox3.TabStop = false;
             groupBox3.Text = "선 두께";
-            groupBox3.Enter += groupBox3_Enter;
             // 
             // trbLineWidth
             // 
